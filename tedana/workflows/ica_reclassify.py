@@ -1,4 +1,5 @@
 """Run the reclassification workflow for a previous tedana run."""
+
 import argparse
 import datetime
 import logging
@@ -49,7 +50,7 @@ def _get_parser():
         nargs="+",
         help=(
             "Component indices to accept (zero-indexed)."
-            "Supply as a comma-delimited liist with no spaces, "
+            "Supply as a comma-delimited list with no spaces, "
             "as a csv file, or as a text file with an allowed "
             f"delimiter {repr(ALLOWED_COMPONENT_DELIMITERS)}."
         ),
@@ -60,8 +61,8 @@ def _get_parser():
         dest="manual_reject",
         nargs="+",
         help=(
-            "Component indices to accept (zero-indexed)."
-            "Supply as a comma-delimited liist with no spaces, "
+            "Component indices to reject (zero-indexed)."
+            "Supply as a comma-delimited list with no spaces, "
             "as a csv file, or as a text file with an allowed "
             f"delimiter {repr(ALLOWED_COMPONENT_DELIMITERS)}."
         ),
@@ -150,7 +151,11 @@ def _get_parser():
 
 def _main(argv=None):
     """Run the ica_reclassify workflow."""
-    reclassify_command = "ica_reclassify " + " ".join(sys.argv[1:])
+    if argv:
+        # relevant for tests or if CLI called using ica_reclassify_cli._main(args)
+        reclassify_command = "ica_reclassify " + " ".join(argv)
+    else:
+        reclassify_command = "ica_reclassify " + " ".join(sys.argv[1:])
 
     args = _get_parser().parse_args(argv)
 
@@ -297,6 +302,27 @@ def ica_reclassify_workflow(
     if not op.isdir(out_dir):
         os.mkdir(out_dir)
 
+    # boilerplate
+    prefix = io._infer_prefix(prefix)
+    basename = f"{prefix}report"
+    extension = "txt"
+    repname = op.join(out_dir, (basename + "." + extension))
+    bibtex_file = op.join(out_dir, f"{prefix}references.bib")
+    repex = op.join(out_dir, (basename + "*"))
+    previousreps = glob(repex)
+    previousreps.sort(reverse=True)
+    for f in previousreps:
+        previousparts = op.splitext(f)
+        newname = previousparts[0] + "_old" + previousparts[1]
+        os.rename(f, newname)
+
+    # create logfile name
+    basename = "tedana_"
+    extension = "tsv"
+    start_time = datetime.datetime.now().strftime("%Y-%m-%dT%H%M%S")
+    logname = op.join(out_dir, (basename + start_time + "." + extension))
+    utils.setup_loggers(logname=logname, repname=repname, quiet=quiet, debug=debug)
+
     # If accept and reject are a list of integers, they stay the same
     # If they are a filename, load numbers of from
     # If they are a string of values, convert to a list of ints
@@ -327,27 +353,6 @@ def ica_reclassify_workflow(
     if len(in_both) != 0:
         raise ValueError("The following components were both accepted and rejected: " f"{in_both}")
 
-    # boilerplate
-    prefix = io._infer_prefix(prefix)
-    basename = f"{prefix}report"
-    extension = "txt"
-    repname = op.join(out_dir, (basename + "." + extension))
-    bibtex_file = op.join(out_dir, f"{prefix}references.bib")
-    repex = op.join(out_dir, (basename + "*"))
-    previousreps = glob(repex)
-    previousreps.sort(reverse=True)
-    for f in previousreps:
-        previousparts = op.splitext(f)
-        newname = previousparts[0] + "_old" + previousparts[1]
-        os.rename(f, newname)
-
-    # create logfile name
-    basename = "tedana_"
-    extension = "tsv"
-    start_time = datetime.datetime.now().strftime("%Y-%m-%dT%H%M%S")
-    logname = op.join(out_dir, (basename + start_time + "." + extension))
-    utils.setup_loggers(logname=logname, repname=repname, quiet=quiet, debug=debug)
-
     # Save command into sh file, if the command-line interface was used
     # TODO: use io_generator to save command
     if reclassify_command is not None:
@@ -362,8 +367,7 @@ def ica_reclassify_workflow(
         reclassify_command = f"ica_reclassify_workflow({variables})"
 
     # Save system info to json
-    info_dict = utils.get_system_info()
-    info_dict["Python"] = sys.version
+    info_dict = utils.get_system_version_info()
     info_dict["Command"] = reclassify_command
 
     LGR.info(f"Using output directory: {out_dir}")
@@ -512,6 +516,7 @@ def ica_reclassify_workflow(
                     "Version": info_dict["Version"],
                 },
                 "Python": info_dict["Python"],
+                "Python_Libraries": info_dict["Python_Libraries"],
                 "Command": info_dict["Command"],
             }
         ],
@@ -541,7 +546,7 @@ def ica_reclassify_workflow(
             gscontrol.append("gsr")
         if mir:
             gscontrol.append("mir")
-        gscontrol = None if gscontrol is [] else gscontrol
+        gscontrol = None if gscontrol == [] else gscontrol
 
         reporting.static_figures.carpet_plot(
             optcom_ts=data_oc,
